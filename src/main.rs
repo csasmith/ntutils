@@ -1,4 +1,7 @@
-
+/// TODO: how to get better CLI help messages?
+///
+/// TODO: testing!
+///
 /// TODO: should probably have third option to generate
 /// prime of given size along with factorization and generator
 /// using algorithm given in Shoup.
@@ -6,16 +9,14 @@
 /// TODO: allow factorization as optional parameter to 
 /// get_generator
 /// 
-/// TODO: DIY gcd
-/// 
 /// TODO: Bezout coefficients
 
-use anyhow::{anyhow, Error, Ok, Result};
+use anyhow::{Ok, Result};
 use clap::{Args, Parser, Subcommand};
-use num::{BigUint, One, Zero};
-use std::{collections::BTreeMap, str::FromStr};
-use num_prime::{Primality, nt_funcs::{is_prime, factorize}};
-use rand::Rng;
+use num::BigUint;
+use std::str::FromStr;
+use num_prime::nt_funcs::factorize;
+use ntutils::*;
 
 
 #[derive(Parser)]
@@ -74,23 +75,26 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
+        // compute gcd of {a} and {b}
         Commands::Gcd(gcd_args) => {
             let a = BigUint::from_str(&gcd_args.a)?;
             let b = BigUint::from_str(&gcd_args.b)?;
             let d = gcd(a.clone(),b.clone());
             println!("gcd({:?}, {:?}) = {:?}", a, b, d);
             Ok(())
-        }
+        },
+        // compute Euler's totient of {n}, given optional factorization {factors} of n
         Commands::Phi(phi_args) => {
             let n = BigUint::from_str(&phi_args.n)?;
             let factors = match &phi_args.factors {
-                Some(cli_factors) => Some(parse_cli_factors(cli_factors)?),
+                Some(cli_factors) => Some(parse_cli_factorization(cli_factors)?),
                 None => None
             };
             let phi = eulers_phi(n.clone(), factors);
             println!("phi({:?}) = {:?}", n, phi);
             Ok(())
         },
+        // get prime factorization of {n}
         Commands::Factorize(factorize_args) => {
             let n = BigUint::from_str(&factorize_args.n)?;
             let mut factors = factorize(n.clone()).into_iter().peekable();
@@ -104,7 +108,8 @@ fn main() -> Result<()> {
             }
             println!("{output}");
             Ok(())
-        },
+        }, 
+        // get generator for Z_p^*, p a prime {modulus}
         Commands::GetGenerator(get_generator_args) => {
             println!("args: {:?}", get_generator_args);
             // check genargs.modulus is prime
@@ -113,6 +118,7 @@ fn main() -> Result<()> {
             println!("generator: {:?}", generator);
             Ok(())
         },
+        // test if {candidate_gen} is a generator for Z_p^*, p a prime {modulus}
         Commands::IsGenerator(is_generator_args) => {
             println!("args: {:?}", is_generator_args);
             let g = BigUint::from_str(&is_generator_args.candidate_gen)?;
@@ -127,90 +133,3 @@ fn main() -> Result<()> {
     }
 }
 
-fn parse_cli_factors(factors: &str) -> Result<BTreeMap<BigUint, usize>, Error> {
-    let factor_split = factors
-        .trim()
-        .split(',')
-        .map(|prime_power| prime_power
-            .split_once("^")
-            .ok_or(anyhow!("failed to find '^' character when parsing factorization")))
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-    let (successes, errors): (Vec<_>, Vec<_>) = factor_split
-        .into_iter()
-        .map(|(q, e)| (BigUint::from_str(q), usize::from_str(e)))
-        .partition(|(q,e)| q.is_ok() && e.is_ok());
-    if errors.is_empty() {
-        Ok(successes.into_iter()
-            .map(|(q,e)| (q.unwrap(), e.unwrap()))
-            .collect::<BTreeMap<BigUint, usize>>()) 
-    } else {
-        Err(anyhow!("Error parsing factorization: {:?}", errors))
-    }
-}
-
-fn gcd(a: BigUint, b: BigUint) -> BigUint {
-    if b == BigUint::zero() {
-        return a;
-    } else {
-        return gcd(b.clone(), a % b);
-    }
-}
-
-fn eulers_phi(n: BigUint, factors: Option<BTreeMap<BigUint, usize>>) -> BigUint {
-    let factors: BTreeMap<BigUint, usize> = match factors {
-        Some(factors) => factors,
-        None => factorize(n)
-    };
-    factors
-        .into_iter()
-        .fold(BigUint::one(), |acc, (q,e)| {
-            acc * q.pow((e-1).try_into().unwrap()) * (q - BigUint::one())
-    })
-}
-
-
-fn get_generator(p: BigUint) -> Result<BigUint> {
-    if is_prime(&p, None) != Primality::Yes {
-        return Err(anyhow!("argument is not a prime"));
-    }
-    // find a generator for Z_p^* using Shoup's algorithm 
-    // WARNING: factoring p-1 could be very slow!
-    let mut rng = rand::thread_rng();
-    let mut gen_factors = Vec::<BigUint>::new();
-    let gp_size = p.clone() - BigUint::one();
-    let factors = factorize(gp_size.clone());
-    factors.into_iter()
-        .map(|(q, e)| (q, BigUint::from(e)))
-        .for_each(|(q, e)| { // for each prime factor and exponent...
-            // a is used for randomly sampled elements of Z_p^*
-            // b is set to a^{(p-1)/q_i} and checked to see if equals 1
-            let mut a = BigUint::default(); // default is zero
-            let mut b = BigUint::one(); 
-            while b.is_one() {
-                a = BigUint::from(rng.gen_range(BigUint::one()..p.clone()));
-                b = a.modpow(&(gp_size.clone() / q.clone().modpow(&e, &p)), &p);
-            }
-            let exponent = gp_size.clone() / q.clone().modpow(&e, &p);
-            gen_factors.push(a.modpow(&exponent, &p));
-        });
-    let generator = gen_factors
-        .into_iter()
-        .reduce(|acc, y| acc * y % p.clone()).unwrap();
-    Ok(generator)
-}
-
-fn is_generator(g: BigUint, p: BigUint) -> Result<bool> {
-    if is_prime(&p, None) != Primality::Yes {
-        return Err(anyhow!("argument is not a prime"));
-    }
-    let gp_size = p.clone() - BigUint::one();
-    let factors = factorize(gp_size.clone());
-    Ok(
-        factors.into_iter()
-            .map(|(q, e)| (q, BigUint::from(e)))
-            .all(|(q, e)| 
-                g.modpow(&(gp_size.clone() / q.clone().modpow(&e, &p)), &p) != BigUint::one()
-            )
-    )
-}
