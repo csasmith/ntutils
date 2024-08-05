@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Error, Ok, Result};
-use num::{BigUint, One, Zero};
+use num::{BigUint, Integer, One};
 use num_prime::{
     nt_funcs::{factorize, is_prime},
     Primality,
@@ -11,6 +11,9 @@ use std::{
 };
 
 /// Parses unique factorization given in format e.g., 2^2,3^1
+/// TODO: why BTreeMap again? Why not hashmap with keys as prime factors and values as exponents?
+/// I suspect it's because originally I was going to allow same prime factor to show up in
+/// input multiple times, but not anymore...
 pub fn parse_cli_factorization(factors: &str) -> Result<BTreeMap<BigUint, usize>, Error> {
     let factor_split = factors
         .trim()
@@ -50,8 +53,8 @@ pub fn parse_cli_factorization(factors: &str) -> Result<BTreeMap<BigUint, usize>
 /// like small numbers vs. large numbers.
 /// See https://stackoverflow.com/questions/22281661/what-is-the-fastest-way-to-find-the-gcd-of-two-numbers
 /// for more info.
-pub fn gcd(a: BigUint, b: BigUint) -> BigUint {
-    if b == BigUint::zero() {
+pub fn gcd<T: Integer + Clone>(a: T, b: T) -> T {
+    if b.is_zero() {
         return a;
     } else {
         return gcd(b.clone(), a % b);
